@@ -38,9 +38,6 @@ ends
 
 section '.data' data readable writeable
 
-	infoMsgCap	TCHAR		'Info', 0
-	infoMsg		TCHAR		'xtract ver 1.0.0', 0Ah, 0Dh, 'By LunarFlint 2016', 0
-
 	dateFormat	TCHAR		'yyyy-MM-dd', 0
 	.wordLength 	= 		($ - dateFormat) shr 1
 	timeFormat	TCHAR		'HH-mm-ss', 0
@@ -55,7 +52,12 @@ section '.data' data readable writeable
 	.timePtrEnd	du		?
 	.ext		du		'png', 0
 
-	dirCreatedMsg	du		'Output directory Created:', 0Ah, 0Dh
+	infoMsgCap	TCHAR		'Info', 0
+	outputDirMsgCap	TCHAR		'Output directory created', 0
+
+	infoMsg		TCHAR		'xtract ver 1.0.0', 0Ah, 0Dh, 'By LunarFlint 2016', 0Ah, 0Dh, 0Ah, 0Dh
+
+	outputDirMsg	du		'Output directory at:', 0Ah, 0Dh
 	resolvedPath	du		256 dup ?
 	.wordLength	=		($ - resolvedPath) shr 1
 
@@ -113,7 +115,7 @@ section '.code' code readable executable
 		invoke CreateDirectory, resolvedPath, NULL
 		or eax, eax
 		jz @f
-			invoke MessageBox, NULL, dirCreatedMsg, NULL, MB_ICONINFORMATION + MB_OK
+			invoke MessageBox, NULL, outputDirMsg, outputDirMsgCap, MB_ICONINFORMATION + MB_OK
 		@@:
 
 		;gdi plus
