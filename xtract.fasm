@@ -41,9 +41,26 @@ section '.data' data readable writeable
 	infoMsgCap	TCHAR		'Info', 0
 	infoMsg		TCHAR		'xtract ver 1.0.0', 0Ah, 0Dh, 'By LunarFlint 2016', 0
 
-	pngFileName	du		'out.png', 0
+	dateFormat	TCHAR		'yyyy-MM-dd', 0
+	.wordLength 	= 		($ - dateFormat) shr 1
+	timeFormat	TCHAR		'HH-mm-ss', 0
+	.wordLength 	= 		($ - timeFormat) shr 1
+
+	outPath		du		'%HOMEDRIVE%%HOMEPATH%\xtract'
+	.pathEnd	du		'\'
+	pngFileName	du		'screenshot-'
+	.datePtr 	du 		(dateFormat.wordLength - 1) dup ?
+	.datePtrEnd	du		?
+	.timePtr	du		(timeFormat.wordLength - 1) dup ?
+	.timePtrEnd	du		?
+	.ext		du		'png', 0
+
+	dirCreatedMsg	du		'Output directory Created:', 0Ah, 0Dh
+	resolvedPath	du		256 dup ?
+	.wordLength	=		($ - resolvedPath) shr 1
+
 	pngMime 	du 		'image/png', 0
-	.wordLength = ($ - pngMime) shr 1
+	.wordLength 	= 		($ - pngMime) shr 1
 
 	pngEncoderId	db 16 dup	?
 
@@ -88,6 +105,16 @@ section '.code' code readable executable
 			numEncoder	dd			0
 			encoderSz	dd			0
 		endl
+
+		;create out folder if not exist
+		mov [outPath.pathEnd], 0
+		invoke ExpandEnvironmentStrings, outPath, resolvedPath, resolvedPath.wordLength
+		mov [outPath.pathEnd], '\'
+		invoke CreateDirectory, resolvedPath, NULL
+		or eax, eax
+		jz @f
+			invoke MessageBox, NULL, dirCreatedMsg, NULL, MB_ICONINFORMATION + MB_OK
+		@@:
 
 		;gdi plus
 		invoke GdiplusStartup, addr gdipToken, addr gdipInput, NULL
@@ -413,9 +440,16 @@ section '.code' code readable executable
 			jmp .ifend
 		@@:
 			; to png
+			invoke GetDateFormat, 0x007f, 0, NULL, dateFormat, pngFileName.datePtr, dateFormat.wordLength
+			invoke GetTimeFormat, 0x007f, 0, NULL, timeFormat, pngFileName.timePtr, timeFormat.wordLength
+			mov [pngFileName.datePtrEnd], '-'	;undo the string terminations
+			mov [pngFileName.timePtrEnd], '.'
+
+			invoke ExpandEnvironmentStrings, outPath, resolvedPath, resolvedPath.wordLength
+
 			invoke GdipCreateBitmapFromHBITMAP, ebx, NULL, addr gdipBmp
 
-			invoke GdipSaveImageToFile, [gdipBmp], pngFileName, pngEncoderId, NULL
+			invoke GdipSaveImageToFile, [gdipBmp], resolvedPath, pngEncoderId, NULL
 
 			invoke GdipDisposeImage, [gdipBmp]
 
