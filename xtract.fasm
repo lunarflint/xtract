@@ -8,16 +8,44 @@
 
 format PE GUI 4.0
 
-entry _main
+entry _entrypoint
 
 include 'win32wx.inc'
+
+struct GdiplusStartupInput
+	GdiplusVersion			dd ?
+	DebugEventCallback		dd ?
+	SuppressBackgroundThread	dd ?
+	SuppressExternalCodecs		dd ?
+ends
+
+struct ImageCodecInfo
+	Clsid				db 16 dup ?
+	FormatID			db 16 dup ?
+	CodecName			dd ?
+	DllName				dd ?
+	FormatDescription		dd ?
+	FilenameExtension		dd ?
+	MimeType			dd ?
+	Flags				dd ?
+	Version				dd ?
+	SigCount			dd ?
+	SizeSize			dd ?
+	SigPattern			dd ?
+	SigMask				dd ?
+ends
+
 
 section '.data' data readable writeable
 
 	infoMsgCap	TCHAR		'Info', 0
 	infoMsg		TCHAR		'xtract ver 1.0.0', 0Ah, 0Dh, 'By LunarFlint 2016', 0
 
+	pngFileName	du		'out.png', 0
+	pngMime 	du 		'image/png', 0
+	.wordLength = ($ - pngMime) shr 1
 
+	pngEncoderId	db 16 dup	?
 
 	mainWcName	TCHAR 		'XTRACT_MAIN_WIN_CLASS', 0
 	mainWc		WNDCLASSEX 	sizeof.WNDCLASSEX, CS_HREDRAW + CS_VREDRAW, MainWndProc, 0, 0, NULL, NULL, NULL, NULL, NULL, mainWcName, NULL
@@ -38,18 +66,78 @@ section '.data' data readable writeable
 	msg		MSG
 	ps		PAINTSTRUCT
 
-	mainWin		dd		NULL
-	toolWin		dd		NULL
+	mainWin		dd		?
+	toolWin		dd		?
 
 	bgPen		dd		?
 	bgBrush		dd		?
 
-	borderWidth	dd		5
 
 
 section '.code' code readable executable
 
-	_main:
+	_entrypoint:
+		stdcall Main
+		invoke ExitProcess, 0
+
+	proc Main
+	_Main:
+		locals
+			gdipToken	dd			?
+			gdipInput	GdiplusStartupInput	1, 0, 0, 0
+			numEncoder	dd			0
+			encoderSz	dd			0
+		endl
+
+		;gdi plus
+		invoke GdiplusStartup, addr gdipToken, addr gdipInput, NULL
+		or eax, eax
+		jnz .err
+
+		;query for gdi plus png encoder
+		invoke GdipGetImageEncodersSize, addr numEncoder, addr encoderSz
+		or eax, eax
+		jnz .err
+
+		mov eax, [numEncoder]
+		or eax, eax
+		jz .err
+
+		push ebx esi edi
+
+		invoke VirtualAlloc, 0, [encoderSz], MEM_COMMIT, PAGE_READWRITE
+		mov ebx, eax
+		or eax, eax
+		jz .err
+
+		invoke GdipGetImageEncoders, [numEncoder], [encoderSz], ebx
+		or eax, eax
+		jnz .err
+		
+		mov eax, ebx
+		@@:	;loop
+		mov esi, [eax + ImageCodecInfo.MimeType] 	; load 2 strs for comparing
+		mov edi, pngMime
+		mov ecx, pngMime.wordLength 			; word count
+		repe cmpsw					; repeat ecx times, compare words
+		je @f
+		add eax, sizeof.ImageCodecInfo			; move to next structure in the array
+		dec [numEncoder]
+		jnz @b
+		; not found
+		invoke VirtualFree, ebx, 0, MEM_RELEASE
+		jmp .err
+
+		@@:	; found
+		lea esi, [eax + ImageCodecInfo.Clsid]		; copy the id
+		mov edi, pngEncoderId
+		mov ecx, 4
+		rep movsd
+		invoke VirtualFree, ebx, 0, MEM_RELEASE
+
+		pop edi esi ebx
+
+
 		;gdi pens and brushes
 		invoke CreatePen, PS_DASH, 1, 12345
 		mov [bgPen], eax
@@ -60,7 +148,6 @@ section '.code' code readable executable
 		mov [bgBrush], eax
 		or eax, eax
 		jz .err
-
 
 		;win classes
 		invoke GetModuleHandle, 0
@@ -76,8 +163,7 @@ section '.code' code readable executable
 		jz .err
 
 		;create windows
-		;note: lparam = 1337 for main win in WM_CREATE
-		invoke CreateWindowEx, WS_EX_TOPMOST + WS_EX_LAYERED, mainWcName, wTitle, WS_POPUP, 300, 300, 300, 300, NULL, NULL, [mainWc.hInstance], 1337
+		invoke CreateWindowEx, WS_EX_TOPMOST + WS_EX_LAYERED, mainWcName, wTitle, WS_POPUP, 300, 300, 300, 300, NULL, NULL, [mainWc.hInstance], NULL
 		mov [mainWin], eax
 		or eax, eax
 		jz .err
@@ -103,7 +189,9 @@ section '.code' code readable executable
 		.quit:
 			invoke DeleteObject, [bgPen]
 			invoke DeleteObject, [bgBrush]
-			invoke ExitProcess, 0
+			invoke GdiplusShutdown, [gdipToken]
+			ret
+	endp
 
 	
 	proc MainWndProc hwnd, msgCode, wparam, lparam
@@ -231,7 +319,7 @@ section '.code' code readable executable
 
 		.wmCreate:
 			invoke CreateWindowEx, 0, buttonWcName, btnC, WS_CHILD + WS_VISIBLE, 10, 10, 20, 20, [hwnd], 1001, [toolWc.hInstance], NULL
-			;not implemented invoke CreateWindowEx, 0, buttonWcName, btnS, WS_CHILD + WS_VISIBLE, 30, 10, 20, 20, [hwnd], 1002, [toolWc.hInstance], NULL
+			invoke CreateWindowEx, 0, buttonWcName, btnS, WS_CHILD + WS_VISIBLE, 30, 10, 20, 20, [hwnd], 1002, [toolWc.hInstance], NULL
 			invoke CreateWindowEx, 0, buttonWcName, btnI, WS_CHILD + WS_VISIBLE, 50, 10, 20, 20, [hwnd], 1003, [toolWc.hInstance], NULL
 			invoke CreateWindowEx, 0, buttonWcName, btnX, WS_CHILD + WS_VISIBLE, 70, 10, 20, 20, [hwnd], 1004, [toolWc.hInstance], NULL
 			jmp .defWndProc
@@ -253,10 +341,10 @@ section '.code' code readable executable
 			dd .btnC, .btnS, .btnI, .btnX
 
 			.btnC:
-				stdcall Capture, [mainWin]
+				stdcall Capture, [mainWin], 0
 				jmp @f
 			.btnS:
-				;not implemented
+				stdcall Capture, [mainWin], 1
 				jmp @f
 			.btnI:
 				invoke MessageBox, [mainWin], infoMsg, infoMsgCap, MB_ICONINFORMATION + MB_OK
@@ -272,12 +360,13 @@ section '.code' code readable executable
 			ret
 	endp
 
-	proc Capture, hwnd:DWORD
+	proc Capture, hwnd:DWORD, mode:DWORD
 	_Capture:
 		locals
 			r	RECT
 			srcDc	dd	?
 			destDc	dd	?
+			gdipBmp	dd	?
 		endl
 
 		push ebx esi edi	;for storing bitmap, w, h
@@ -288,7 +377,7 @@ section '.code' code readable executable
 		sub esi, [r.left]
 		sub edi, [r.top]
 
-		invoke GetDC, NULL
+		invoke GetDC, HWND_DESKTOP
 		mov [srcDc], eax
 
 		invoke CreateCompatibleDC, eax
@@ -305,18 +394,34 @@ section '.code' code readable executable
 
 		invoke ShowWindow, [mainWin], SW_RESTORE
 
-		invoke ReleaseDC, NULL, [srcDc]
+		invoke ReleaseDC, HWND_DESKTOP, [srcDc]
 
 		invoke DeleteDC, [destDc]
 
+		mov eax, [mode]
+		or eax, eax
+		jnz @f
+			; to clipboard
+			invoke OpenClipboard, [mainWin]
 
-		invoke OpenClipboard, [mainWin]
+			invoke EmptyClipboard
 
-		invoke EmptyClipboard
+			invoke SetClipboardData, CF_BITMAP, ebx	; ownership of the HBITMAP transferred, don't call DeleteObject on ebx
 
-		invoke SetClipboardData, CF_BITMAP, ebx
+			invoke CloseClipboard
 
-		invoke CloseClipboard
+			jmp .ifend
+		@@:
+			; to png
+			invoke GdipCreateBitmapFromHBITMAP, ebx, NULL, addr gdipBmp
+
+			invoke GdipSaveImageToFile, [gdipBmp], pngFileName, pngEncoderId, NULL
+
+			invoke GdipDisposeImage, [gdipBmp]
+
+			invoke DeleteObject, ebx
+
+		.ifend:
 
 		pop edi esi ebx
 
@@ -327,10 +432,19 @@ section '.code' code readable executable
 
 section '.idata' import data readable
 	library kernel32, 	'KERNEL32.DLL', \
-		user32, 	'USER32.DLL',	\
-		gdi32,		'GDI32.DLL'
+		user32, 	'USER32.DLL', \
+		gdi32,		'GDI32.DLL', \
+		gdiplus,	'GDIPLUS.DLL'
 	
 	include 'api/kernel32.inc'
 	include 'api/user32.inc'
 	include 'api/gdi32.inc'
 
+	import  gdiplus, \
+		GdiplusShutdown,'GdiplusShutdown', \
+		GdiplusStartup,'GdiplusStartup', \
+		GdipCreateBitmapFromHBITMAP,'GdipCreateBitmapFromHBITMAP', \
+		GdipDisposeImage,'GdipDisposeImage', \
+		GdipGetImageEncodersSize,'GdipGetImageEncodersSize', \
+		GdipGetImageEncoders,'GdipGetImageEncoders', \
+		GdipSaveImageToFile,'GdipSaveImageToFile'
