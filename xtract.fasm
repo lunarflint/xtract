@@ -38,33 +38,39 @@ ends
 
 section '.data' data readable writeable
 
+	cfg		du		'.\config.ini', 0
+	.output		du		'output', 0
+	.directory	du		'directory', 0
+
 	dateFormat	TCHAR		'yyyy-MM-dd', 0
 	.wordLength 	= 		($ - dateFormat) shr 1
 	timeFormat	TCHAR		'HH-mm-ss', 0
 	.wordLength 	= 		($ - timeFormat) shr 1
 
-	outPath		du		'%HOMEDRIVE%%HOMEPATH%\xtract'
-	.pathEnd	du		'\'
+	resolvedPath	du		256 dup 0
+	.wordLength	=		($ - resolvedPath) shr 1
+	.fnamePtr	dd		resolvedPath	;ptr pointing to the start of the filename
+
+	pngMime 	du 		'image/png', 0
+	.wordLength 	= 		($ - pngMime) shr 1
+
+	pngEncoderId	db 		16 dup ?
+
 	pngFileName	du		'screenshot-'
 	.datePtr 	du 		(dateFormat.wordLength - 1) dup ?
 	.datePtrEnd	du		?
 	.timePtr	du		(timeFormat.wordLength - 1) dup ?
 	.timePtrEnd	du		?
 	.ext		du		'png', 0
+	.wordLength	=		($ - pngFileName) shr 1
+
+	buffer		du		256 dup ?
+	.wordLength	=		($ - buffer) shr 1
 
 	infoMsgCap	TCHAR		'Info', 0
-	outputDirMsgCap	TCHAR		'Output directory created', 0
 
-	infoMsg		TCHAR		'xtract ver 1.0.0', 0Ah, 0Dh, 'By LunarFlint 2016', 0Ah, 0Dh, 0Ah, 0Dh
+	infoMsg		TCHAR		'xtract ver 1.0.1', 0Ah, 0Dh, 'By LunarFlint 2016', 0
 
-	outputDirMsg	du		'Output directory at:', 0Ah, 0Dh
-	resolvedPath	du		256 dup ?
-	.wordLength	=		($ - resolvedPath) shr 1
-
-	pngMime 	du 		'image/png', 0
-	.wordLength 	= 		($ - pngMime) shr 1
-
-	pngEncoderId	db 16 dup	?
 
 	mainWcName	TCHAR 		'XTRACT_MAIN_WIN_CLASS', 0
 	mainWc		WNDCLASSEX 	sizeof.WNDCLASSEX, CS_HREDRAW + CS_VREDRAW, MainWndProc, 0, 0, NULL, NULL, NULL, NULL, NULL, mainWcName, NULL
@@ -72,15 +78,20 @@ section '.data' data readable writeable
 	toolWcName	TCHAR 		'XTRACT_TOOL_WIN_CLASS', 0
 	toolWc		WNDCLASSEX 	sizeof.WNDCLASSEX, 0, ToolWndProc, 0, 0, NULL, NULL, NULL, NULL, NULL, toolWcName, NULL
 
+	wingdings	LOGFONT		0, 0, 0, 0, FW_NORMAL, 0, 0, 0, SYMBOL_CHARSET, OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS, PROOF_QUALITY, VARIABLE_PITCH + FF_DECORATIVE, 'Wingdings'
+	wingdingsFont	dd		?
+
+	webdings	LOGFONT		0, 0, 0, 0, FW_NORMAL, 0, 0, 0, SYMBOL_CHARSET, OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS, PROOF_QUALITY, VARIABLE_PITCH + FF_DECORATIVE, 'Webdings'
+	webdingsFont	dd		?
+
 	buttonWcName	TCHAR 		'BUTTON', 0
 
 	wTitle		TCHAR 		'xtract', 0
-	errorTxt 	TCHAR 		'error', 0
 
-	btnC		TCHAR		'c', 0
-	btnS		TCHAR		's', 0
+	btnC		TCHAR		'4', 0
+	btnS		TCHAR		'<', 0
 	btnI		TCHAR		'i', 0
-	btnX		TCHAR		'x', 0
+	btnX		TCHAR		'r', 0
 
 	msg		MSG
 	ps		PAINTSTRUCT
@@ -90,6 +101,10 @@ section '.data' data readable writeable
 
 	bgPen		dd		?
 	bgBrush		dd		?
+
+	;error text
+	errorTxt 	TCHAR 		'error', 0
+	outFolderErrTxt TCHAR		'Output folder does not exist. Please double check the path in config.ini', 0
 
 
 
@@ -108,15 +123,21 @@ section '.code' code readable executable
 			encoderSz	dd			0
 		endl
 
-		;create out folder if not exist
-		mov [outPath.pathEnd], 0
-		invoke ExpandEnvironmentStrings, outPath, resolvedPath, resolvedPath.wordLength
-		mov [outPath.pathEnd], '\'
-		invoke CreateDirectory, resolvedPath, NULL
-		or eax, eax
-		jz @f
-			invoke MessageBox, NULL, outputDirMsg, outputDirMsgCap, MB_ICONINFORMATION + MB_OK
-		@@:
+		;load config.ini
+		invoke GetPrivateProfileString, cfg.output, cfg.directory, NULL, buffer, buffer.wordLength, cfg
+
+		invoke ExpandEnvironmentStrings, buffer, resolvedPath, resolvedPath.wordLength
+		shl eax, 1	;word count to byte count
+		add [resolvedPath.fnamePtr], eax
+
+		invoke GetFileAttributes, resolvedPath ;check if folder exists
+		cmp eax, -1 ; = INVALID_FILE_ATTRIBUTES
+		je .err
+		and eax, 16 ; has FILE_ATTRIBUTE_DIRECTORY flag
+		jz .err
+
+		mov eax, [resolvedPath.fnamePtr]
+		mov word[eax - 2], '\'	; append a path separator to the end
 
 		;gdi plus
 		invoke GdiplusStartup, addr gdipToken, addr gdipInput, NULL
@@ -166,9 +187,20 @@ section '.code' code readable executable
 
 		pop edi esi ebx
 
+		;fonts
+		invoke CreateFontIndirect, wingdings
+		or eax, eax
+		jz .err
+		mov [wingdingsFont], eax
+
+		invoke CreateFontIndirect, webdings
+		or eax, eax
+		jz .err
+		mov [webdingsFont], eax
+
 
 		;gdi pens and brushes
-		invoke CreatePen, PS_DASH, 1, 12345
+		invoke CreatePen, PS_SOLID, 1, 0x0000FF
 		mov [bgPen], eax
 		or eax, eax
 		jz .err
@@ -197,7 +229,7 @@ section '.code' code readable executable
 		or eax, eax
 		jz .err
 
-		invoke SetLayeredWindowAttributes, [mainWin], 0, 127, LWA_ALPHA
+		invoke SetLayeredWindowAttributes, [mainWin], 0, 145, LWA_ALPHA
 
 		invoke ShowWindow, [mainWin], SW_SHOWNORMAL
 		invoke UpdateWindow, [mainWin]
@@ -216,6 +248,8 @@ section '.code' code readable executable
 			invoke MessageBox, NULL, errorTxt, NULL, MB_ICONERROR + MB_OK
 
 		.quit:
+			invoke DeleteObject, [webdingsFont]
+			invoke DeleteObject, [wingdingsFont]
 			invoke DeleteObject, [bgPen]
 			invoke DeleteObject, [bgBrush]
 			invoke GdiplusShutdown, [gdipToken]
@@ -347,10 +381,18 @@ section '.code' code readable executable
 			jmp .wndProcEnd
 
 		.wmCreate:
-			invoke CreateWindowEx, 0, buttonWcName, btnC, WS_CHILD + WS_VISIBLE, 10, 10, 20, 20, [hwnd], 1001, [toolWc.hInstance], NULL
-			invoke CreateWindowEx, 0, buttonWcName, btnS, WS_CHILD + WS_VISIBLE, 30, 10, 20, 20, [hwnd], 1002, [toolWc.hInstance], NULL
-			invoke CreateWindowEx, 0, buttonWcName, btnI, WS_CHILD + WS_VISIBLE, 50, 10, 20, 20, [hwnd], 1003, [toolWc.hInstance], NULL
-			invoke CreateWindowEx, 0, buttonWcName, btnX, WS_CHILD + WS_VISIBLE, 70, 10, 20, 20, [hwnd], 1004, [toolWc.hInstance], NULL
+			invoke CreateWindowEx, 0, buttonWcName, btnC, WS_CHILD + WS_VISIBLE + BS_FLAT, 10, 10, 20, 20, [hwnd], 1001, [toolWc.hInstance], NULL
+			invoke SendMessage, eax, WM_SETFONT, [wingdingsFont], TRUE shl 16
+
+			invoke CreateWindowEx, 0, buttonWcName, btnS, WS_CHILD + WS_VISIBLE + BS_FLAT, 30, 10, 20, 20, [hwnd], 1002, [toolWc.hInstance], NULL
+			invoke SendMessage, eax, WM_SETFONT, [wingdingsFont], TRUE shl 16
+
+			invoke CreateWindowEx, 0, buttonWcName, btnI, WS_CHILD + WS_VISIBLE + BS_FLAT, 50, 10, 20, 20, [hwnd], 1003, [toolWc.hInstance], NULL
+			invoke SendMessage, eax, WM_SETFONT, [webdingsFont], TRUE shl 16
+
+			invoke CreateWindowEx, 0, buttonWcName, btnX, WS_CHILD + WS_VISIBLE + BS_FLAT, 70, 10, 20, 20, [hwnd], 1004, [toolWc.hInstance], NULL
+			invoke SendMessage, eax, WM_SETFONT, [webdingsFont], TRUE shl 16
+
 			jmp .defWndProc
 
 		.wmCommand:
@@ -447,7 +489,13 @@ section '.code' code readable executable
 			mov [pngFileName.datePtrEnd], '-'	;undo the string terminations
 			mov [pngFileName.timePtrEnd], '.'
 
-			invoke ExpandEnvironmentStrings, outPath, resolvedPath, resolvedPath.wordLength
+			;invoke ExpandEnvironmentStrings, outPath, resolvedPath, resolvedPath.wordLength
+			mov esi, pngFileName
+			mov edi, [resolvedPath.fnamePtr]
+			mov ecx, pngFileName.wordLength
+			rep movsw
+
+			;invoke MessageBox, NULL, resolvedPath, NULL, MB_ICONERROR + MB_OK
 
 			invoke GdipCreateBitmapFromHBITMAP, ebx, NULL, addr gdipBmp
 
