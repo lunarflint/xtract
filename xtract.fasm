@@ -103,8 +103,10 @@ section '.data' data readable writeable
 	bgBrush		dd		?
 
 	;error text
-	errorTxt 	TCHAR 		'error', 0
-	outFolderErrTxt TCHAR		'Output folder does not exist. Please double check the path in config.ini', 0
+	errTxtPtr	dd		genericErrTxt
+	genericErrTxt	TCHAR 		'Unrecoverable error', 0
+	cfgLoadErrTxt	TCHAR		'Cannot load config', 0
+	outFolderErrTxt TCHAR		'Output folder does not exist. Please double check the path specified in config.ini', 0
 
 
 
@@ -124,12 +126,16 @@ section '.code' code readable executable
 		endl
 
 		;load config.ini
+		mov [errTxtPtr], cfgLoadErrTxt
 		invoke GetPrivateProfileString, cfg.output, cfg.directory, NULL, buffer, buffer.wordLength, cfg
+		or eax, eax
+		jz .err
 
 		invoke ExpandEnvironmentStrings, buffer, resolvedPath, resolvedPath.wordLength
 		shl eax, 1	;word count to byte count
 		add [resolvedPath.fnamePtr], eax
 
+		mov [errTxtPtr], outFolderErrTxt
 		invoke GetFileAttributes, resolvedPath ;check if folder exists
 		cmp eax, -1 ; = INVALID_FILE_ATTRIBUTES
 		je .err
@@ -138,6 +144,8 @@ section '.code' code readable executable
 
 		mov eax, [resolvedPath.fnamePtr]
 		mov word[eax - 2], '\'	; append a path separator to the end
+
+		mov [errTxtPtr], genericErrTxt
 
 		;gdi plus
 		invoke GdiplusStartup, addr gdipToken, addr gdipInput, NULL
@@ -245,7 +253,7 @@ section '.code' code readable executable
 
 
 		.err:
-			invoke MessageBox, NULL, errorTxt, NULL, MB_ICONERROR + MB_OK
+			invoke MessageBox, NULL, [errTxtPtr], NULL, MB_ICONERROR + MB_OK
 
 		.quit:
 			invoke DeleteObject, [webdingsFont]
